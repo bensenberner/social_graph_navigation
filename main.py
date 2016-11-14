@@ -123,14 +123,14 @@ def getClosestDist(ID, checkins, G, endLocs):
                     minDist = min(minDist, dist)
     return minDist
 
-def sortNodesSaved(IDs, checkins, G, endLocs):
+def sortNodesSaved(IDs, checkins, G, endLocs, degree_dict_param):
     closest_dist_dict = {}
     degree_dict = {}
     allInfinity = True
     for ID in IDs:
         closest_dist = getClosestDist(ID, checkins, G, endLocs)
         if closest_dist == float('inf'):
-            degree_dict[ID] = G.degree(ID)
+            degree_dict[ID] = G.degree(ID) if not degree_dict_param else degree_dict_param[ID]
         else:
             allInfinity = False
             closest_dist_dict[ID] = closest_dist
@@ -237,8 +237,11 @@ def getNeighbors(currNodeID, testcaseID):
     return neighbors
 
 def findPath(checkins, G, startId=None, endId=None, testcaseID):
+    if startId == None or endId == None: return None
     actual_run = True if G == None else False
     print(startId, endId)
+
+    degree_dict = {}
     queries = 0
     endLocs = checkins[endId]
     if actual_run:
@@ -252,6 +255,7 @@ def findPath(checkins, G, startId=None, endId=None, testcaseID):
         endNeighborDegrees = {
                 ID: endNeighborsDict[ID][0] for ID in endNeighborsDict
         }
+        degree_dict.update(endNeighborDegrees)
     else:
         endNeighborDegrees = {ID: G.degree(ID) for ID in endNeighbors}
     sortedNeighborsDeg = sorted(endNeighborDegrees.items(),
@@ -265,6 +269,11 @@ def findPath(checkins, G, startId=None, endId=None, testcaseID):
     if actual_run:
         endNeighborNeighborsDict = getNeighbors(maxEndNeighborId, testcaseID)
         endNeighborNeighborsList = [ID for ID in endNeighborNeighborsDict]
+        endNeighborNeighborDegrees = {
+                ID: endNeighborNeighborsDict[ID][0] for ID in endNeighborNeighborsDict
+        }
+        degree_dict.update(endNeighborNeighborDegrees)
+
     else:
         endNeighborNeighborsList = G.neighbors(maxEndNeighborId)
 
@@ -275,7 +284,6 @@ def findPath(checkins, G, startId=None, endId=None, testcaseID):
     visited = set()
     stack = [startId]
     back = {startId: None}
-    new_G = {}
     # node1, node2 = [int(x) for x in line[:-1].split()]
     # G.add_edge(node1, node2)
 
@@ -294,7 +302,11 @@ def findPath(checkins, G, startId=None, endId=None, testcaseID):
 
             if actual_run:
                 neighDict = getNeighbors(curr, testcaseID)
+                neighDegreeDict = {
+                    ID: neighDict[ID][0] for ID in neighDict
+                }
                 neighList = [ID for ID in neighDict]
+                degree_dict.update(neighDegreeDict)
             else:
                 neighList = G.neighbors(curr)
             queries += 1
@@ -333,7 +345,7 @@ def findPath(checkins, G, startId=None, endId=None, testcaseID):
             if len(unvisitedNeighbors) > 0:
                 truncateAmount = 3
                 sortedNeighbors = sortNodesSaved(unvisitedNeighbors, checkins,
-                        G, endLocs)
+                        G, endLocs, degree_dict)
                 stack.extend(sortedNeighbors[-truncateAmount:])
 
     print(back)
@@ -368,8 +380,11 @@ if __name__ == "__main__":
 #            startId = response['source node']
 #            endId = response['target node']
 
-        startId = None
-        endId = None
+        random.seed()
+        startId = random.randint(0, 47708)
+        endId = random.randint(0, 47708)
+        #startId = None
+        #endId = None
 
         path = findPath(checkins, G, startId, endId)
         #T = 1
