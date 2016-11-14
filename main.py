@@ -8,6 +8,7 @@ import pickle
 import random
 import operator
 
+REAL = False
 pp = pprint.PrettyPrinter(indent=4)
 CHECKIN_PICKLE = 'checkins_new.pickle'
 CHECKIN_PICKLE_2 = 'checkins_new_part_2.pickle'
@@ -15,10 +16,8 @@ CHECKIN_PICKLE_2 = 'checkins_new_part_2.pickle'
 EDGE_PICKLE = 'edge.pickle'
 #CHECKIN_TRAIN = 'checkin_usersGPS_largcomp_index.csv'
 CHECKIN_TRAIN = 'checkin_usersGPS_largcomp_training.csv'
+CHECKIN_REAL = 'checkin_usersGPS_largcomp_index.csv'
 EDGE_TRAIN = 'usersGPS_larg_comp_training.txt'
-
-def addToAverage(avg, size, val):
-    return (size * avg + val) / (size + 1)
 
 # build edges
 def getGraph(saved=False):
@@ -43,7 +42,8 @@ def getCheckins(saved=False):
             return checkins
     else:
         checkins = {}
-        with open(CHECKIN_TRAIN, 'r') as f:
+        CHECKIN_ORIGINAL_FILE = CHECKIN_REAL if REAL else CHECKIN_TRAIN
+        with open(CHECKIN_ORIGINAL_FILE, 'r') as f:
             for line in f:
                 curr_data = line[:-1].split(',')
                 ID, lat_val, long_val, timestamp = curr_data
@@ -67,6 +67,7 @@ def getCheckins(saved=False):
 
         return checkins
 
+# most recent only
 def getCheckins2(saved=False):
     if saved:
         with open(CHECKIN_PICKLE_2, 'rb') as p:
@@ -74,7 +75,8 @@ def getCheckins2(saved=False):
             return checkins
     else:
         checkins = {}
-        with open(CHECKIN_TRAIN, 'r') as f:
+        CHECKIN_ORIGINAL_FILE = CHECKIN_REAL if REAL else CHECKIN_TRAIN
+        with open(CHECKIN_ORIGINAL_FILE, 'r') as f:
             for line in f:
                 curr_data = line[:-1].split(',')
                 ID, lat_val, long_val, timestamp = curr_data
@@ -103,7 +105,7 @@ def getClosestDist(ID, checkins, G, endLocs):
     minutes = 200
     # it all boils down to using seconds
     seconds_threshold = 60 * minutes
-    miles_threshold = 25
+    miles_threshold = 29
     minDist = float('inf')
     for currCheckin in checkins[ID]:
         for endCheckin in endLocs:
@@ -128,7 +130,6 @@ def sortNodesSaved(IDs, checkins, G, endLocs):
     for ID in IDs:
         closest_dist = getClosestDist(ID, checkins, G, endLocs)
         if closest_dist == float('inf'):
-            #degree_dict[ID] = G.degree(ID) / G.
             degree_dict[ID] = G.degree(ID)
         else:
             allInfinity = False
@@ -195,48 +196,88 @@ def findPathLength(path, checkins):
     return length
 
 def findPath2(checkins, G, path):
-    for i in range(2, len(path)-1, 2):
-        ID1 = path[i-2]
-        loc1 = getLoc(ID1, checkins)
-        ID2 = path[i]
-        loc2 = getLoc(ID2, checkins)
+    start_vals = [2, 3]
+    # number of iterations to shorten
+    T = 30
+    for t in range(T):
+        start_val_idx = t % 2
+        start_idx = start_vals[start_val_idx]
+        for i in range(start_idx, len(path)-1, 2):
+            ID1 = path[i-2]
+            loc1 = getLoc(ID1, checkins)
+            ID2 = path[i]
+            loc2 = getLoc(ID2, checkins)
 
-        # find the intersection of the neighbors
-        neighbors1 = set(G.neighbors(ID1))
-        neighbors2 = set(G.neighbors(ID1))
-        neighbor_intersection = neighbors1.intersection(neighbors2)
-        minMutualDist = float('inf')
-        minMutual = None
-        # pick the best mutual in place of what is already there
-        for mutual in neighbor_intersection:
-            # compute the distance from node1 --> mutual --> node2, minimize
-            mutual_loc = getLoc(mutual)
-            dist = getGeoDist(loc1, mutual_loc) + getGeoDist(mutual_loc, loc2)
-            if dist < minMutualDist:
-                minMutualDist = dist
-                minMutual = mutual
-        path[i-1] = minMutual
+            # find the intersection of the neighbors
+            neighbors1 = set(G.neighbors(ID1))
+            neighbors2 = set(G.neighbors(ID1))
+            neighbor_intersection = neighbors1.intersection(neighbors2)
+            minMutualDist = float('inf')
+            minMutual = None
+            # pick the best mutual in place of what is already there
+            for mutual in neighbor_intersection:
+                # compute the distance from node1 --> mutual --> node2, minimize
+                mutual_loc = getLoc(mutual, checkins)
+                dist = getGeoDist(loc1, mutual_loc) + getGeoDist(mutual_loc, loc2)
+                if dist < minMutualDist:
+                    minMutualDist = dist
+                    minMutual = mutual
+            path[i-1] = minMutual
+        print("currPath: ", path)
+        print("currLen: ", findPathLength(path, checkins))
+
     return path
 
-def findPath(checkins, G, startId=None, endId=None):
+def getNeighbors(currNodeID, testcaseID):
+    URL = 'https://6io70nu9pi.execute-api.us-east-1.amazonaws.com/smallworld/neighbors?node=%d&uni=bll2121&testcaseID=%d' % (currNodeID, testcaseID)
+    r = requests.get(URL)
+    response = r.json()
+    neighbors_response = response['neighbors']
+    neighbors = {int(x): neighbors_response[x] for x in neighbors_response.keys()}
+    return neighbors
+
+def findPath(checkins, G, startId=None, endId=None, testcaseID):
+    actual_run = True if G == None else False
     print(startId, endId)
     queries = 0
     endLocs = checkins[endId]
-    endNeighbors = set(G.neighbors(endId))
+    if actual_run:
+        endNeighborsDict = getNeighbors(endId, testcaseID)
+        endNeighborList = [ID for ID in endNeighborsDict]
+    else:
+        endNeighborList = G.neighbors(endId)
     queries += 1
-    endNeighborDegrees = {ID: G.degree(ID) for ID in endNeighbors}
+    endNeighbors = set(endNeighborList)
+    if actual_run:
+        endNeighborDegrees = {
+                ID: endNeighborsDict[ID][0] for ID in endNeighborsDict
+        }
+    else:
+        endNeighborDegrees = {ID: G.degree(ID) for ID in endNeighbors}
     sortedNeighborsDeg = sorted(endNeighborDegrees.items(),
             key=operator.itemgetter(1))
+    # find the best of the end neighbors to continue adding more nodes for
+    # searching
     maxEndNeighbor = sortedNeighborsDeg[-1]
 
     # add some more neighbors
     maxEndNeighborId = maxEndNeighbor[0]
-    queries += 1
-    endNeighborNeighbors = set(G.neighbors(maxEndNeighborId))
+    if actual_run:
+        endNeighborNeighborsDict = getNeighbors(maxEndNeighborId, testcaseID)
+        endNeighborNeighborsList = [ID for ID in endNeighborNeighborsDict]
+    else:
+        endNeighborNeighborsList = G.neighbors(maxEndNeighborId)
 
+    endNeighborNeighbors = set(endNeighborNeighborsList)
+    queries += 1
+
+    # keeping track of all the nodes we've seen so far
     visited = set()
     stack = [startId]
     back = {startId: None}
+    new_G = {}
+    # node1, node2 = [int(x) for x in line[:-1].split()]
+    # G.add_edge(node1, node2)
 
     while stack:
         curr = stack.pop()
@@ -245,20 +286,28 @@ def findPath(checkins, G, startId=None, endId=None):
 
         if curr not in visited:
             visited.add(curr)
-            queries += 1
             # if we are doing the API
 #            r = requests.get('https://6io70nu9pi.execute-api.us-east-1.amazonaws.com/smallworld/neighbors?node=%s&uni=bll2121&testcaseID=1' % (curr))
 #            response = r.json()
 #            neighbors = response['neighbors']
 #            unvisitedNeighbors = set()
 
-            neighs = set(G.neighbors(curr))
+            if actual_run:
+                neighDict = getNeighbors(curr, testcaseID)
+                neighList = [ID for ID in neighDict]
+            else:
+                neighList = G.neighbors(curr)
+            queries += 1
+            neighs = set(neighList)
+
             unvisitedNeighbors = neighs - visited
 
             # we found the neighbor of the destination node, so we are
             # basically done
             possibleOverlap = unvisitedNeighbors.intersection(endNeighbors)
             if len(possibleOverlap) > 0:
+                # pick any of the points in the intersection and use that to
+                # get to the target node
                 shortcut = next(iter(possibleOverlap))
                 back[shortcut] = curr
                 back[endId] = shortcut
@@ -266,6 +315,7 @@ def findPath(checkins, G, startId=None, endId=None):
 
             furtherOverlap = unvisitedNeighbors.intersection(endNeighborNeighbors)
             if len(furtherOverlap) > 0:
+                # same thing as before but now it's one removed
                 shortcut = next(iter(furtherOverlap))
                 back[shortcut] = curr
                 back[maxEndNeighborId] = shortcut
@@ -280,17 +330,16 @@ def findPath(checkins, G, startId=None, endId=None):
             if endId in unvisitedNeighbors:
                 break
 
-            # for part 1
-            # TODO: old way
             if len(unvisitedNeighbors) > 0:
                 truncateAmount = 3
                 sortedNeighbors = sortNodesSaved(unvisitedNeighbors, checkins,
                         G, endLocs)
                 stack.extend(sortedNeighbors[-truncateAmount:])
 
+    print(back)
     path = []
     currId = endId
-    while currId:
+    while currId != None:
         path.append(currId)
         if not currId in back:
             print("Could not find ", endId, currId)
@@ -306,38 +355,34 @@ def findPath(checkins, G, startId=None, endId=None):
     return path
 
 if __name__ == "__main__":
-    part = 2
+    part = 1
     if part == 1:
         saved = True
         checkins = getCheckins(saved)
         G = getGraph(saved)
+        #G = None
+#        if REAL:
+#        # for the API
+#            r = requests.get('https://6io70nu9pi.execute-api.us-east-1.amazonaws.com/smallworld/start/1')
+#            response = r.json()
+#            startId = response['source node']
+#            endId = response['target node']
 
-        # for the API
-        # r = requests.get('https://6io70nu9pi.execute-api.us-east-1.amazonaws.com/smallworld/start/1')
-        # response = r.json()
-        # startId = response['source node']
-        # endId = response['target node']
+        startId = None
+        endId = None
 
-        for t in range(100):
-            random.seed()
-            startId = random.randint(0, 47708)
-            endId = random.randint(0, 47708)
-            #minTimeA = min(x[2] for x in checkins[15299])
-            #minTimeB = min(x[2] for x in checkins[44742])
-            #a = [[x[0], x[1], x[2] - minTimeA] for x in checkins[15299]]
-            #b = [[x[0], x[1], x[2] - minTimeB] for x in checkins[44742]]
-            # for node in nx.shortest_path(G, startId, endId):
-                # pp.pprint(G.neighbors(node))
-            #print('all the end neighbors')
-            #pp.pprint(G.neighbors(endId))
-            #print('#####################')
-            #pp.pprint(a)
-            #pp.pprint(b)
-            #pp.pprint(nx.shortest_path(G, startId, endId))
-            path = findPath(checkins, G, startId, endId)
+        path = findPath(checkins, G, startId, endId)
+        #T = 1
+        #for t in range(T):
+        #    random.seed()
+        #    startId = 0
+        #    endId = 2
+        ##    startId = random.randint(0, 47708)
+        ##    endId = random.randint(0, 47708)
+        #    path = findPath(checkins, G, startId, endId)
 
     elif part == 2:
-        saved = False
+        saved = True
         checkins = getCheckins(saved)
         checkins2 = getCheckins2(saved)
         G = getGraph(saved)
@@ -348,6 +393,6 @@ if __name__ == "__main__":
             originalPath = findPath(checkins, G, startId, endId)
             print(originalPath)
             print("geoLengthIs: ", findPathLength(originalPath, checkins2))
-            path = findPath2(checkins2, G, path)
+            path = findPath2(checkins2, G, originalPath)
             print(path)
             print("new geolength is: ", findPathLength(path, checkins2))
